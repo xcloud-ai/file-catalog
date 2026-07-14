@@ -8,8 +8,13 @@
 }
 
 .file-catalog li {
-  padding: 2px 0;
-  line-height: 1.7;
+  padding: 1px 0;
+  line-height: var(--fc-line-height, 1.4);
+  font-size: var(--fc-font-size, 1em);
+}
+
+.file-catalog ul ul {
+  padding-left: var(--fc-indent, 20px);
 }
 
 .file-catalog .internal-link {
@@ -49,6 +54,17 @@
 .catalog-error {
   color: var(--text-error, #e05252);
   font-style: italic;
+}
+
+/* 静态链接（不含 [[]] 的标题）：黑色，可点击但不被 Obsidian 追踪 */
+.catalog-static-link {
+  color: var(--fc-static-color, var(--text-normal, currentColor)) !important;
+  text-decoration: none;
+}
+
+.catalog-static-link:hover {
+  text-decoration: underline;
+  color: var(--text-accent, #7c3aed) !important;
 }
 
 /* 分隔线与描述 */

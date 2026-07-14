@@ -22,8 +22,15 @@ const DEFAULT_SETTINGS = {
   // 快捷键配置：为每个命令配快捷键
   hotkeyConfigs: [
     { commandId: "insert-file-catalog", name: "插入文件目录", hotkey: null },
-    { commandId: "insert-current-file-catalog", name: "插入当前文件目录", hotkey: null },
   ],
+  // 目录样式
+  style: {
+    linkColor: "",       // 超链接标题颜色，空=Obsidian 默认
+    staticColor: "",     // 无链接标题颜色，空=正文色
+    fontSize: "",        // 字体大小(px)，空=默认
+    lineHeight: "1.4",   // 行间距
+    indentSize: "20",    // 层级缩进(px)
+  },
 };
 
 // ================================================================
@@ -125,40 +132,58 @@ class FileCatalogPlugin extends Plugin {
       }
       el.empty();
       el.addClass("file-catalog");
+      // 应用自定义样式（CSS 变量）
+      const s = this.settings.style || {};
+      if (s.lineHeight) el.style.setProperty("--fc-line-height", s.lineHeight);
+      if (s.fontSize) el.style.setProperty("--fc-font-size", s.fontSize + "px");
+      if (s.indentSize) el.style.setProperty("--fc-indent", s.indentSize + "px");
+      if (s.staticColor) el.style.setProperty("--fc-static-color", s.staticColor);
       const markdown = this.generateCatalog(fileName, ctx.sourcePath);
       await MarkdownRenderer.renderMarkdown(markdown, el, ctx.sourcePath, this);
+      // 渲染后覆盖超链接颜色
+      if (s.linkColor) {
+        el.querySelectorAll("a.internal-link:not(.catalog-static-link)").forEach((a) => {
+          a.style.color = s.linkColor;
+        });
+      }
     });
 
     // 2. 命令：插入文件目录
+    //    - 有选中文本（如 [[test]]）→ 直接替换为目录
+    //    - 无选中文本 → 插入 ```filecatalog 代码块框架，光标定位到内部
     this.addCommand({
       id: "insert-file-catalog",
       name: "插入文件目录",
       editorCallback: (editor) => {
-        new FileNameModal(this.app, (fileName) => {
-          const markdown = this.generateCatalog(fileName);
-          editor.replaceSelection(markdown + "\n");
-          new Notice(`已插入「${fileName}」的目录`, 3000);
-        }).open();
-      },
-    });
-
-    // 3. 命令：插入当前文件目录
-    this.addCommand({
-      id: "insert-current-file-catalog",
-      name: "插入当前文件目录",
-      editorCallback: (editor) => {
-        const file = this.app.workspace.getActiveFile();
-        if (!file) {
-          new Notice("没有打开的文件", 3000);
-          return;
+        const selection = editor.getSelection();
+        if (selection) {
+          const fileName = parseFileName(selection);
+          if (fileName) {
+            const markdown = this.generateCatalog(fileName);
+            editor.replaceSelection(markdown + "\n");
+            new Notice(`已生成「${fileName}」的目录`, 3000);
+            return;
+          }
         }
-        const markdown = this.generateCatalog(file.basename);
-        editor.replaceSelection(markdown + "\n");
-        new Notice("已插入当前文件的目录", 3000);
+        // 无选中 → 插入代码块框架，光标定位到内部
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+        const beforeCursor = line.substring(0, cursor.ch);
+        const afterCursor = line.substring(cursor.ch);
+
+        let block = "```filecatalog\n\n```";
+        if (beforeCursor.trim() !== "") block = "\n" + block;
+        if (afterCursor.trim() !== "") block = block + "\n";
+
+        editor.replaceSelection(block);
+
+        const newCursor = editor.getCursor();
+        const targetLine = afterCursor.trim() !== "" ? newCursor.line - 2 : newCursor.line - 1;
+        editor.setCursor({ line: targetLine, ch: 0 });
       },
     });
 
-    // 4. 绑定保存的快捷键
+    // 3. 绑定保存的快捷键
     for (const config of this.settings.hotkeyConfigs) {
       if (config.hotkey) {
         const fullId = `${PLUGIN_ID}:${config.commandId}`;
@@ -186,6 +211,7 @@ class FileCatalogPlugin extends Plugin {
   //  核心：生成目录 markdown
   // ================================================================
   generateCatalog(fileName, sourcePath = "") {
+    const staticColor = (this.settings.style && this.settings.style.staticColor) || "";
     const file = this.app.metadataCache.getFirstLinkpathDest(fileName, sourcePath);
     if (!file) {
       return `> [!ERROR] 错误\n> 未找到文件: **${fileName}**，请检查文件名是否正确。`;
@@ -213,9 +239,13 @@ class FileCatalogPlugin extends Plugin {
       const hasLink = /\[\[.*?\]\]/.test(rawHeading);
 
       if (hasLink) {
+        // 含 [[]] 链接 → 保留原样（Obsidian 渲染为蓝色链接，会被追踪）
         lines.push(`${indent}- ${rawHeading}`);
       } else {
-        lines.push(`${indent}- [[${fileName}#${rawHeading}|${rawHeading}]]`);
+        // 不含链接 → HTML <a> 标签（黑色，可点击跳转但不被 Obsidian 追踪，不实时更新）
+        const href = `${fileName}#${rawHeading}`;
+        const styleAttr = staticColor ? ` style="color: ${staticColor};"` : "";
+        lines.push(`${indent}- <a data-href="${href}" href="${href}" class="internal-link catalog-static-link" target="_blank" rel="noopener"${styleAttr}>${rawHeading}</a>`);
       }
     }
 
@@ -227,8 +257,14 @@ class FileCatalogPlugin extends Plugin {
     if (!this.settings.headingLevels) {
       this.settings.headingLevels = Object.assign({}, DEFAULT_SETTINGS.headingLevels);
     }
-    if (!this.settings.hotkeyConfigs) {
-      this.settings.hotkeyConfigs = DEFAULT_SETTINGS.hotkeyConfigs.map((c) => Object.assign({}, c));
+    // 重建 hotkeyConfigs：以 DEFAULT_SETTINGS 为准，保留已有快捷键，清理已删除的命令
+    const oldConfigs = this.settings.hotkeyConfigs || [];
+    this.settings.hotkeyConfigs = DEFAULT_SETTINGS.hotkeyConfigs.map((def) => {
+      const old = oldConfigs.find((c) => c.commandId === def.commandId);
+      return { commandId: def.commandId, name: def.name, hotkey: old ? old.hotkey : null };
+    });
+    if (!this.settings.style) {
+      this.settings.style = Object.assign({}, DEFAULT_SETTINGS.style);
     }
   }
 
@@ -318,6 +354,77 @@ class FileCatalogSettingTab extends PluginSettingTab {
     for (let i = 0; i < this.plugin.settings.hotkeyConfigs.length; i++) {
       this.createHotkeySetting(i);
     }
+
+    // ---- 目录样式设置 ----
+    containerEl.createEl("hr", { cls: "fc-divider" });
+    containerEl.createEl("h3", { text: "目录样式" });
+
+    const style = this.plugin.settings.style || {};
+
+    new Setting(containerEl)
+      .setName("超链接标题颜色")
+      .setDesc("含 [[]] 链接的标题颜色（如 #7c3aed），留空使用 Obsidian 默认")
+      .addText((text) =>
+        text
+          .setPlaceholder("#7c3aed")
+          .setValue(style.linkColor || "")
+          .onChange(async (value) => {
+            this.plugin.settings.style.linkColor = value.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("无链接标题颜色")
+      .setDesc("不含链接的标题颜色（如 #333333），留空使用正文色")
+      .addText((text) =>
+        text
+          .setPlaceholder("#333333")
+          .setValue(style.staticColor || "")
+          .onChange(async (value) => {
+            this.plugin.settings.style.staticColor = value.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("字体大小")
+      .setDesc("目录字体大小(px)，留空使用默认")
+      .addText((text) =>
+        text
+          .setPlaceholder("14")
+          .setValue(style.fontSize || "")
+          .onChange(async (value) => {
+            this.plugin.settings.style.fontSize = value.trim();
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("行间距")
+      .setDesc("目录行间距，默认 1.4")
+      .addText((text) =>
+        text
+          .setPlaceholder("1.4")
+          .setValue(style.lineHeight || "1.4")
+          .onChange(async (value) => {
+            this.plugin.settings.style.lineHeight = value.trim() || "1.4";
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("层级缩进")
+      .setDesc("每级标题的缩进距离(px)，默认 20")
+      .addText((text) =>
+        text
+          .setPlaceholder("20")
+          .setValue(style.indentSize || "20")
+          .onChange(async (value) => {
+            this.plugin.settings.style.indentSize = value.trim() || "20";
+            await this.plugin.saveSettings();
+          })
+      );
 
     // ---- 更多入口 ----
     containerEl.createEl("hr", { cls: "fc-divider" });
