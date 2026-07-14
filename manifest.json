@@ -1,0 +1,9 @@
+{
+  "id": "file-catalog",
+  "name": "文件目录生成器",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "读取指定文件的标题生成可点击目录树，支持代码块动态渲染和命令插入，替代 DataviewJS 的 filecatalog 脚本。",
+  "author": "旭说云原生",
+  "isDesktopOnly": false
+}
