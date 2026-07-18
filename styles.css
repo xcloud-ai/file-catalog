@@ -57,14 +57,15 @@
 }
 
 /* 静态链接（不含 [[]] 的标题）：黑色，可点击但不被 Obsidian 追踪 */
-.catalog-static-link {
-  color: var(--fc-static-color, var(--text-normal, currentColor)) !important;
+/* 用高特异性选择器覆盖 Obsidian 默认链接颜色，避免使用 !important */
+.file-catalog .catalog-static-link {
+  color: var(--fc-static-color, var(--text-normal, currentColor));
   text-decoration: none;
 }
 
-.catalog-static-link:hover {
+.file-catalog .catalog-static-link:hover {
   text-decoration: underline;
-  color: var(--text-accent, #7c3aed) !important;
+  color: var(--text-accent, #7c3aed);
 }
 
 /* 分隔线与描述 */

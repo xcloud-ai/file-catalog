@@ -1,8 +1,10 @@
-# File Catalog / 文件目录生成器
+# 文件目录生成器
 
-读取指定 Markdown 文件的标题，生成带层级缩进的可点击目录树。支持代码块动态渲染、命令插入、标题层级与样式自定义、快捷键配置与冲突检测。
+读取指定 Markdown 文件的标题，生成带层级缩进的可点击目录树。支持代码块动态渲染、命令插入、标题层级与样式自定义、快捷键配置与冲突检测，替代 DataviewJS 的 filecatalog 脚本，无需 Dataview 依赖。
 
-替代 DataviewJS 的 filecatalog 脚本，无需 Dataview 依赖。
+> English description below for review purposes. / 以下为英文说明，用于过审。
+
+Reads headings from a specified Markdown file and generates a clickable, hierarchically indented table of contents. Supports code block dynamic rendering, command insertion, heading level customization, style customization, and hotkey configuration with conflict detection. Replaces DataviewJS filecatalog scripts without Dataview dependency.
 
 ## 功能特性
 
@@ -15,14 +17,42 @@
 - **不实时更新**：不含链接的标题用 HTML `<a>` 标签，不被 Obsidian 追踪，文件重命名时不自动更新
 - **快捷键自定义**：在插件设置面板直接配置快捷键，即时检测冲突
 
+### Features
+
+- Code block dynamic rendering: ` ```filecatalog ` renders TOC in reading view
+- Supports `[[]]` link format with Obsidian autocomplete
+- Command dual-mode: replace selected `[[file]]` with TOC, or insert code block frame
+- Custom heading levels: select H1-H6 to display, default H2 + H3
+- Style customization: link/static color, font size, line height, indent
+- Color distinction: linked headings blue, static headings black
+- Hotkey customization with instant conflict detection
+
 ## 安装
 
-### 手动安装
+### 方式一：从 Obsidian 社区目录安装(推荐)
 
-1. 下载最新 Release 的 `main.js`、`manifest.json`、`styles.css`
-2. 在 Obsidian 仓库下创建 `.obsidian/plugins/file-catalog/` 目录
-3. 将 3 个文件放入该目录
-4. Obsidian → 设置 → 第三方插件 → 关闭安全模式 → 找到「文件目录生成器」→ 开启
+1. 打开 Obsidian 设置 → 社区插件
+2. 点击"浏览"，搜索 "文件目录生成器"
+3. 点击"安装"，然后"启用"
+
+### 方式二：手动安装
+
+1. 从 [最新 Release](https://github.com/xcloud-ai/file-catalog/releases) 下载 `main.js`、`manifest.json`、`styles.css` 三个文件
+2. 在 vault 中创建目录 `.obsidian/plugins/file-catalog/`
+3. 将三个文件放入该目录
+4. 打开 Obsidian 设置 → 社区插件，找到"文件目录生成器"并开启
+
+### Installation
+
+**From Obsidian Community Directory:**
+1. Open Obsidian Settings → Community Plugins
+2. Click "Browse" and search for "File Catalog"
+3. Click "Install", then "Enable"
+
+**Manual Installation:**
+1. Download `main.js`, `manifest.json`, `styles.css` from the [latest release](https://github.com/xcloud-ai/file-catalog/releases)
+2. Put them in `<vault>/.obsidian/plugins/file-catalog/`
+3. Enable in Settings → Community Plugins
 
 ## 使用方法
 
@@ -67,6 +97,17 @@ test
 - 标题本身含 `[[]]` 链接 → 保留原样，Obsidian 渲染为蓝色链接
 - 标题不含链接 → 生成 HTML `<a>` 标签，黑色，可点击跳转但不被追踪
 
+### Usage
+
+**Code block rendering:**
+- Write ` ```filecatalog ` with `[[filename]]` inside
+- Reading view renders the TOC automatically
+
+**Command: Insert file catalog:**
+- Ctrl+P → "Insert file catalog"
+- With `[[file]]` selected: replaces with TOC
+- Without selection: inserts code block frame
+
 ## 设置说明
 
 | 设置项 | 说明 |
@@ -100,11 +141,8 @@ test
 - 使用 `MarkdownRenderer.renderMarkdown` 渲染目录
 - 快捷键通过 `hotkeyManager.setHotkeys` 绑定，与 Obsidian 系统快捷键互通
 - `loadSettings` 每次以 DEFAULT_SETTINGS 为准重建 hotkeyConfigs，自动清理已删除的命令
+- CSS 不使用 `!important`，通过提高选择器特异性覆盖默认样式
 
 ## 许可证
 
-[MIT License](./LICENSE)
-
-## 作者
-
-**旭说云原生**
+MIT License - Copyright (c) 2026 旭说云原生
