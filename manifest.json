@@ -1,7 +1,7 @@
 {
   "id": "file-catalog",
   "name": "XU File Catalog",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "minAppVersion": "1.4.0",
   "description": "读取指定文件的标题生成可点击目录树，支持代码块动态渲染、命令插入、标题层级与样式自定义、快捷键配置与冲突检测，替代 DataviewJS.",
   "author": "旭说云原生",
