@@ -1,5 +1,5 @@
-/*
- * 文件目录生成器 - main.js
+﻿/*
+ * XU File Catalog - main.js
  * 纯 JavaScript 实现，无需编译，直接放入插件目录即可运行
  *
  * 功能：
@@ -322,7 +322,7 @@ class FileCatalogSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "文件目录生成器" });
+    containerEl.createEl("h2", { text: "XU File Catalog" });
 
     // ---- 标题层级设置 ----
     const levelSetting = new Setting(containerEl)
