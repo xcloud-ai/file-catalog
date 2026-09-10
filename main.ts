@@ -10,27 +10,17 @@
  *
  * 功能：
  *   1. 代码块处理器：```filecatalog\n[[文件名]]\n``` → 动态渲染标题目录
- *   2. 命令「插入文件目录」/「插入当前文件目录」
+ *      支持 [[文件名]] 格式（触发 Obsidian 自动补全）或纯文件名
+ *   2. 命令「插入文件目录」：有选中文本时直接替换为目录，否则插入代码块框架
  *   3. 自定义标题层级：可选择 H1-H6 哪些层级显示，默认 H2+H3
- *   4. 快捷键自定义 + 即时冲突检测
+ *   4. 快捷键：跳转 Obsidian 原生「快捷键」设置页配置（自动定位命令，冲突由系统提示）
  *   5. 中英双语 UI，可在设置面板切换语言
  */
-import { App, MarkdownRenderer, Modal, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { App, MarkdownRenderer, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
 
 interface Hotkey {
   modifiers: string[];
   key: string;
-}
-
-interface HotkeyConfig {
-  commandId: string;
-  name: string;
-  hotkey: Hotkey | null;
-}
-
-interface ConflictInfo {
-  commandId: string;
-  commandName: string;
 }
 
 interface CatalogStyle {
@@ -44,11 +34,21 @@ interface CatalogStyle {
 interface PluginSettings {
   language: "zh" | "en";
   headingLevels: Record<number, boolean>;
-  hotkeyConfigs: HotkeyConfig[];
+  // 旧版自定义快捷键字段：仅迁移时读取，迁移完成后从 data.json 中移除
+  hotkeyConfigs?: Array<{ commandId: string; name?: string; hotkey: Hotkey | null }>;
   style: CatalogStyle;
 }
 
 const PLUGIN_ID = "file-catalog";
+
+// GitHub 仓库（设置页「帮助与文档」入口，含完整操作手册）
+const REPO_URL = "https://github.com/xcloud-ai/file-catalog";
+
+// 插件注册的命令列表（快捷键设置定位用），新增命令时同步维护
+// 命令 id 不含插件 id（Obsidian 自动加前缀），完整 id 为 file-catalog:insert
+const PLUGIN_COMMANDS = ["insert"];
+// 历史命令 id（≤1.1.3），启动时把原生 hotkeys.json 中旧 id 的快捷键迁移到新 id
+const LEGACY_COMMAND_ID = "insert-file-catalog";
 
 // ================================================================
 //  i18n (中英双语支持)
@@ -57,11 +57,8 @@ const I18N: Record<string, Record<string, string>> = {
   zh: {
     // 命令
     cmd_insert_file_catalog: "插入文件目录",
-    cmd_insert_current_file_catalog: "插入当前文件目录",
     // 通知
     notice_catalog_generated: "已生成「{fileName}」的目录",
-    notice_no_open_file: "没有打开的文件",
-    notice_current_catalog_inserted: "已插入当前文件的目录",
     // 代码块处理器
     error_input_filename: "请在代码块中输入文件名",
     // Callout 内容
@@ -72,10 +69,6 @@ const I18N: Record<string, Record<string, string>> = {
     msg_no_matching_headings: "文件 **{fileName}** 中没有匹配的标题（当前显示：{enabled}）。",
     label_none: "无",
     sep_levels: "、",
-    // Modal
-    modal_title: "插入文件目录",
-    modal_desc: "输入目标文件名（不含 .md 扩展名）",
-    modal_placeholder: "如：test",
     // 设置 - 语言
     setting_language: "界面语言",
     setting_language_desc: "选择设置面板的显示语言",
@@ -86,7 +79,7 @@ const I18N: Record<string, Record<string, string>> = {
     setting_heading_levels_desc: "勾选要在目录中显示的标题层级，默认 H2 + H3",
     // 设置 - 快捷键
     sec_hotkey: "快捷键设置",
-    hotkey_desc: "点击输入框后按下快捷键组合即可设置。按 <code>Backspace</code> 或 <code>Esc</code> 清除。设置后自动检测冲突。",
+    hotkey_desc: "在 Obsidian 原生「快捷键」设置页中配置。点击下方按钮自动打开该页面并定位到对应命令，冲突由系统原生提示。",
     // 设置 - 目录样式
     sec_style: "目录样式",
     setting_link_color: "超链接标题颜色",
@@ -99,42 +92,26 @@ const I18N: Record<string, Record<string, string>> = {
     setting_line_height_desc: "目录行间距，默认 1.4",
     setting_indent_size: "层级缩进",
     setting_indent_size_desc: "每级标题的缩进距离(px)，默认 20",
-    // 设置 - 更多
-    setting_more_hotkeys: "更多快捷键设置",
-    setting_more_hotkeys_desc: "打开 Obsidian 系统的快捷键设置页面",
-    btn_open_hotkeys: "打开 Obsidian 快捷键设置",
-    notice_hotkeys_opened: "已打开快捷键设置",
+    // 设置 - 快捷键定位
+    hotkey_native_desc: "通过系统快捷键设置页配置",
+    btn_locate_hotkey: "打开并定位",
+    notice_hotkeys_located: "已打开快捷键设置并定位到「{name}」",
     notice_hotkeys_open_failed: "无法自动打开，请手动进入：设置 → 快捷键",
-    // 设置 - 使用说明
-    tip_title: "使用方法",
-    tip_1: "1. 代码块：<code>```filecatalog</code> 里写 <code>[[文件名]]</code> 或纯文件名",
-    tip_2: "2. 命令：<code>Ctrl+P</code> 搜索「插入文件目录」或「插入当前文件目录」",
-    tip_3: "3. 在上方勾选要显示的标题层级",
-    // 快捷键设置
-    hotkey_placeholder: "点击设置…",
-    hotkey_conflict_label: "⚠️ 冲突：",
-    hotkey_conflict_link: "前往修改 ›",
-    hotkey_no_conflict: "✓ 无冲突",
-    hotkey_tooltip_clear: "清除快捷键",
-    notice_hotkey_cleared: "已清除：{name}",
-    notice_hotkey_set_failed: "设置失败：{message}",
-    notice_hotkey_conflict: "⚠️ 与「{name}」冲突，点击警告中的「前往修改」处理",
-    notice_hotkey_set: "已设置：{name} → {hotkey}",
-    notice_search_in_hotkeys: "请在快捷键设置中搜索「{name}」",
     // 设置 - 重置
     setting_reset: "恢复默认设置",
     setting_reset_desc: "将所有设置恢复为默认值（保留语言选择）",
     btn_reset: "重置",
     notice_reset: "设置已恢复为默认值",
+    // 设置 - 帮助与文档
+    sec_help: "帮助与文档",
+    help_desc: "完整的安装、使用说明（操作手册）与更新日志请访问 GitHub 仓库",
+    btn_open_repo: "打开 GitHub 仓库",
   },
   en: {
     // Commands
     cmd_insert_file_catalog: "Insert file catalog",
-    cmd_insert_current_file_catalog: "Insert current file catalog",
     // Notices
     notice_catalog_generated: "Catalog for '{fileName}' generated",
-    notice_no_open_file: "No file open",
-    notice_current_catalog_inserted: "Current file catalog inserted",
     // Code block processor
     error_input_filename: "Please enter a file name in the code block",
     // Callout content
@@ -145,10 +122,6 @@ const I18N: Record<string, Record<string, string>> = {
     msg_no_matching_headings: "No matching headings in file **{fileName}** (currently showing: {enabled}).",
     label_none: "none",
     sep_levels: ", ",
-    // Modal
-    modal_title: "Insert File Catalog",
-    modal_desc: "Enter the target file name (without .md extension)",
-    modal_placeholder: "e.g. test",
     // Settings - language
     setting_language: "UI Language",
     setting_language_desc: "Select the display language for settings panel",
@@ -159,7 +132,7 @@ const I18N: Record<string, Record<string, string>> = {
     setting_heading_levels_desc: "Check heading levels to display in the catalog, default H2 + H3",
     // Settings - hotkey
     sec_hotkey: "Hotkey Settings",
-    hotkey_desc: "Click the input box then press a key combination to set. Press <code>Backspace</code> or <code>Esc</code> to clear. Conflicts are detected automatically.",
+    hotkey_desc: "Configured in Obsidian's native Hotkeys settings. Click the button below to open that page and locate the command automatically; conflicts are flagged natively.",
     // Settings - style
     sec_style: "Catalog Style",
     setting_link_color: "Link heading color",
@@ -172,43 +145,26 @@ const I18N: Record<string, Record<string, string>> = {
     setting_line_height_desc: "Catalog line height. Default 1.4.",
     setting_indent_size: "Level indent",
     setting_indent_size_desc: "Indent per heading level (px). Default 20.",
-    // Settings - more
-    setting_more_hotkeys: "More hotkey settings",
-    setting_more_hotkeys_desc: "Open Obsidian's hotkey settings page",
-    btn_open_hotkeys: "Open Obsidian hotkey settings",
-    notice_hotkeys_opened: "Hotkey settings opened",
+    // Settings - hotkey locate
+    hotkey_native_desc: "Configured in the native Hotkeys settings page",
+    btn_locate_hotkey: "Open & locate",
+    notice_hotkeys_located: "Hotkeys settings opened and located '{name}'",
     notice_hotkeys_open_failed: "Cannot open automatically. Please go to: Settings → Hotkeys manually.",
-    // Settings - tips
-    tip_title: "Usage",
-    tip_1: "1. Code block: write <code>[[file name]]</code> or plain file name inside <code>```filecatalog</code>",
-    tip_2: "2. Command: <code>Ctrl+P</code> and search for \"Insert file catalog\" or \"Insert current file catalog\"",
-    tip_3: "3. Check the heading levels to display above",
-    // Hotkey settings
-    hotkey_placeholder: "Click to set…",
-    hotkey_conflict_label: "⚠️ Conflict: ",
-    hotkey_conflict_link: "Edit ›",
-    hotkey_no_conflict: "✓ No conflict",
-    hotkey_tooltip_clear: "Clear hotkey",
-    notice_hotkey_cleared: "Cleared: {name}",
-    notice_hotkey_set_failed: "Failed to set: {message}",
-    notice_hotkey_conflict: "⚠️ Conflicts with '{name}'. Click \"Edit\" in the warning to resolve.",
-    notice_hotkey_set: "Set: {name} → {hotkey}",
-    notice_search_in_hotkeys: "Please search for '{name}' in hotkey settings",
     // Settings - reset
     setting_reset: "Reset to defaults",
     setting_reset_desc: "Restore all settings to default values (preserves language selection)",
     btn_reset: "Reset",
     notice_reset: "Settings reset to defaults",
+    // Settings - help & docs
+    sec_help: "Help & Docs",
+    help_desc: "Full installation, usage guide (manual) and changelog are available in the GitHub repository",
+    btn_open_repo: "Open GitHub Repo",
   },
 };
 
 const DEFAULT_SETTINGS: PluginSettings = {
   language: "zh",
   headingLevels: { 1: false, 2: true, 3: true, 4: false, 5: false, 6: false },
-  hotkeyConfigs: [
-    { commandId: "insert-file-catalog", name: "插入文件目录", hotkey: null },
-    { commandId: "insert-current-file-catalog", name: "插入当前文件目录", hotkey: null },
-  ],
   style: {
     linkColor: "",
     staticColor: "",
@@ -218,44 +174,16 @@ const DEFAULT_SETTINGS: PluginSettings = {
   },
 };
 
-function formatHotkey(hotkey: Hotkey | null): string {
-  if (!hotkey) return "";
-  const modMap: Record<string, string> = { Mod: "Ctrl", Ctrl: "Ctrl", Alt: "Alt", Shift: "Shift", Meta: "Win" };
-  const mods = (hotkey.modifiers || []).slice().sort().map((m) => modMap[m] || m);
-  return mods.length > 0 ? `${mods.join(" + ")} + ${hotkey.key}` : hotkey.key;
-}
+// ================================================================
+//  工具函数（快捷键设置页跳转 + 定位）
+// ================================================================
 
-function getEffectiveHotkeys(hotkeyManager: any, commandId: string): any[] {
-  try {
-    if (typeof hotkeyManager.getEffectiveHotkeys === "function") {
-      return hotkeyManager.getEffectiveHotkeys(commandId) || [];
-    }
-    const custom = hotkeyManager.getHotkeys ? hotkeyManager.getHotkeys(commandId) || [] : [];
-    const baked = hotkeyManager.getBakedHotkeys ? hotkeyManager.getBakedHotkeys(commandId) || [] : [];
-    return custom.length > 0 ? custom : baked;
-  } catch {
-    return [];
-  }
-}
-
-function findConflict(app: App, ownCommandId: string, hotkey: Hotkey | null): ConflictInfo | null {
-  if (!hotkey) return null;
-  const targetCombo = formatHotkey(hotkey);
-  const hotkeyManager = (app as any).hotkeyManager;
-  const commands = (app as any).commands.commands as Record<string, { name: string }>;
-  for (const id of Object.keys(commands)) {
-    if (id === ownCommandId) continue;
-    const effective = getEffectiveHotkeys(hotkeyManager, id);
-    for (const h of effective) {
-      if (formatHotkey(h) === targetCombo) {
-        return { commandId: id, commandName: commands[id].name || id };
-      }
-    }
-  }
-  return null;
-}
-
-function openHotkeysSettings(app: App): boolean {
+// 打开 Obsidian 原生快捷键设置页，可选自动填入搜索词定位到指定命令
+// 依赖设置页内部 API：activeTab.searchComponent.inputEl（1.x 实测存在）。
+// 注意：搜索过滤绑定在搜索框 input 事件的 onChange 链路上，程序化赋值
+// 必须派发 input 事件才会触发过滤；设置页渲染完成时机不定，用「输入框
+// 元素引用连续两轮稳定」判定就绪，避免竞态导致只填词不过滤。
+function openHotkeysSettings(app: App, searchQuery?: string): boolean {
   let opened = false;
   try {
     const setting = (app as any).setting;
@@ -271,23 +199,57 @@ function openHotkeysSettings(app: App): boolean {
     try { app.commands.executeCommandById("app:open-settings" as any); opened = true; } catch {}
   }
   if (opened) {
-    setTimeout(() => {
+    let lastInput: any = null;
+    let stableRounds = 0;
+    let attempts = 25;
+    const locate = (): void => {
       try {
         const setting = (app as any).setting;
-        if (setting && typeof setting.openTabById === "function") setting.openTabById("hotkeys");
+        let tab = setting && setting.activeTab;
+        // 兜底路径可能停在别的设置页，先确保切到快捷键页
+        if (!tab || typeof tab.updateHotkeyVisibility !== "function") {
+          if (setting && typeof setting.openTabById === "function") {
+            setting.openTabById("hotkeys");
+          }
+          tab = setting && setting.activeTab;
+        }
+        const input = tab && tab.searchComponent && tab.searchComponent.inputEl;
+        if (input) {
+          // 输入框元素跨轮次稳定 → 设置页渲染已完成
+          if (input === lastInput) {
+            stableRounds++;
+          } else {
+            stableRounds = 0;
+            lastInput = input;
+          }
+          input.value = searchQuery || "";
+          // 程序化赋值不触发原生 onChange，派发 input 事件（与手动输入等价）
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.focus();
+          if (stableRounds >= 1) return; // 输入框已稳定且搜索词生效
+        }
       } catch {}
-    }, 200);
+      if (--attempts > 0) {
+        setTimeout(locate, 120);
+      }
+    };
+    setTimeout(locate, 250);
   }
   return opened;
 }
 
+// 从代码块内容解析文件名，支持 [[文件名]] 和纯文件名两种格式
+// 空 [[]] 占位（命令插入后的默认内容）视为空，渲染时给出"请输入文件名"提示
 function parseFileName(source: string): string {
   const trimmed = source.trim().split("\n")[0].trim();
   const linkMatch = trimmed.match(/^\[\[(.+?)(?:\|(.+?))?\]\]$/);
   if (linkMatch) return linkMatch[1];
-  return trimmed;
+  return trimmed === "[[]]" ? "" : trimmed;
 }
 
+// ================================================================
+//  插件主类
+// ================================================================
 export default class FileCatalogPlugin extends Plugin {
   settings!: PluginSettings;
 
@@ -307,8 +269,7 @@ export default class FileCatalogPlugin extends Plugin {
   // 根据 commandId 获取翻译后的命令显示名
   getCommandDisplayName(commandId: string): string {
     const map: Record<string, string> = {
-      "insert-file-catalog": "cmd_insert_file_catalog",
-      "insert-current-file-catalog": "cmd_insert_current_file_catalog",
+      "insert": "cmd_insert_file_catalog",
     };
     return this.t(map[commandId] || commandId);
   }
@@ -316,6 +277,7 @@ export default class FileCatalogPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
+    // 1. 代码块处理器
     this.registerMarkdownCodeBlockProcessor("filecatalog", async (source: string, el: HTMLElement, ctx: any) => {
       const fileName = parseFileName(source);
       if (!fileName) {
@@ -324,22 +286,27 @@ export default class FileCatalogPlugin extends Plugin {
       }
       el.empty();
       el.addClass("file-catalog");
+      // 应用自定义样式（CSS 变量）
+      const s = this.settings.style || ({} as CatalogStyle);
+      if (s.lineHeight) el.style.setProperty("--fc-line-height", s.lineHeight);
+      if (s.fontSize) el.style.setProperty("--fc-font-size", s.fontSize + "px");
+      if (s.indentSize) el.style.setProperty("--fc-indent", s.indentSize + "px");
+      if (s.staticColor) el.style.setProperty("--fc-static-color", s.staticColor);
       const markdown = this.generateCatalog(fileName, ctx.sourcePath);
       await MarkdownRenderer.renderMarkdown(markdown, el, ctx.sourcePath, this);
+      // 渲染后覆盖超链接颜色
+      if (s.linkColor) {
+        el.querySelectorAll("a.internal-link:not(.catalog-static-link)").forEach((a: HTMLElement) => {
+          a.style.color = s.linkColor;
+        });
+      }
     });
 
+    // 2. 命令注册
     this.registerCommands();
 
-    for (const config of this.settings.hotkeyConfigs) {
-      if (config.hotkey) {
-        const fullId = `${PLUGIN_ID}:${config.commandId}`;
-        try {
-          (this.app as any).hotkeyManager.setHotkeys(fullId, [config.hotkey]);
-        } catch (e) {
-          console.error(`[file-catalog] 绑定 ${config.commandId} 快捷键失败:`, e);
-        }
-      }
-    }
+    // 3. 迁移旧版 data.json 中保存的快捷键到 Obsidian 原生 hotkeys.json（一次性）
+    await this.migrateLegacyHotkeys();
 
     this.addSettingTab(new FileCatalogSettingTab(this.app, this));
   }
@@ -348,47 +315,60 @@ export default class FileCatalogPlugin extends Plugin {
   //  命令注册（提取为独立方法，切换语言时可重新注册）
   // ================================================================
   registerCommands(): void {
+    // 命令：插入文件目录
+    //   - 有选中文本（如 [[test]]）→ 直接替换为目录
+    //   - 无选中文本 → 插入 ```filecatalog 代码块框架，光标定位到内部
     this.addCommand({
-      id: "insert-file-catalog",
+      id: "insert",
       name: this.t("cmd_insert_file_catalog"),
       editorCallback: (editor: any) => {
-        new FileNameModal(this.app, this, (fileName: string) => {
-          const markdown = this.generateCatalog(fileName);
-          editor.replaceSelection(markdown + "\n");
-          new Notice(this.t("notice_catalog_generated", { fileName }), 3000);
-        }).open();
-      },
-    });
+        const selection = editor.getSelection();
+        if (selection) {
+          const fileName = parseFileName(selection);
+          if (fileName) {
+            const markdown = this.generateCatalog(fileName);
+            editor.replaceSelection(markdown + "\n");
+            new Notice(this.t("notice_catalog_generated", { fileName }), 3000);
+            return;
+          }
+        }
+        // 无选中 → 插入代码块框架（内含 [[]] 占位），光标定位到 [[ 与 ]] 之间
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+        const beforeCursor = line.substring(0, cursor.ch);
+        const afterCursor = line.substring(cursor.ch);
 
-    this.addCommand({
-      id: "insert-current-file-catalog",
-      name: this.t("cmd_insert_current_file_catalog"),
-      editorCallback: (editor: any) => {
-        const file = this.app.workspace.getActiveFile();
-        if (!file) { new Notice(this.t("notice_no_open_file"), 3000); return; }
-        const markdown = this.generateCatalog(file.basename);
-        editor.replaceSelection(markdown + "\n");
-        new Notice(this.t("notice_current_catalog_inserted"), 3000);
+        let block = "```filecatalog\n[[]]\n```";
+        if (beforeCursor.trim() !== "") block = "\n" + block;
+        if (afterCursor.trim() !== "") block = block + "\n";
+        editor.replaceSelection(block);
+
+        // 占位行 = 插入起始行 +1；若光标前有内容（块前补了换行）则再 +1；列 2 = "[[" 之后
+        const placeholderLine = cursor.line + (beforeCursor.trim() !== "" ? 2 : 1);
+        editor.setCursor({ line: placeholderLine, ch: 2 });
       },
     });
   }
 
-  onunload(): void {
-    for (const config of this.settings.hotkeyConfigs) {
-      const fullId = `${PLUGIN_ID}:${config.commandId}`;
-      try { (this.app as any).hotkeyManager.removeHotkeys(fullId); } catch {}
-    }
-  }
+  // 快捷键由 Obsidian 原生 hotkeys.json 持久化，插件停用/重载时不得清除；
+  // 命令/代码块处理器经 register 系注册，Obsidian 自动清理，无需 onunload
 
+  // ================================================================
+  //  核心：生成目录 markdown
+  // ================================================================
   generateCatalog(fileName: string, sourcePath: string = ""): string {
+    const staticColor = (this.settings.style && this.settings.style.staticColor) || "";
     const file = this.app.metadataCache.getFirstLinkpathDest(fileName, sourcePath) as any;
     if (!file) {
       return `> [!ERROR] ${this.t("callout_error_title")}\n> ${this.t("msg_file_not_found", { fileName })}`;
     }
+
     const cache = this.app.metadataCache.getFileCache(file);
     if (!cache || !cache.headings || cache.headings.length === 0) {
       return `> [!INFO] ${this.t("callout_info_title")}\n> ${this.t("msg_no_headings", { fileName })}`;
     }
+
+    // 按设置的层级过滤
     const levels = this.settings.headingLevels;
     const headings = cache.headings.filter((h: any) => levels[h.level]);
     if (headings.length === 0) {
@@ -396,18 +376,26 @@ export default class FileCatalogPlugin extends Plugin {
       const enabled = Object.entries(levels).filter(([_, v]) => v).map(([k]) => `H${k}`).join(sep);
       return `> [!INFO] ${this.t("callout_info_title")}\n> ${this.t("msg_no_matching_headings", { fileName, enabled: enabled || this.t("label_none") })}`;
     }
+
     const minLevel = Math.min(...headings.map((h: any) => h.level));
     const lines: string[] = [];
+
     for (const h of headings) {
       const indent = "    ".repeat(h.level - minLevel);
       const rawHeading = h.heading;
       const hasLink = /\[\[.*?\]\]/.test(rawHeading);
+
       if (hasLink) {
+        // 含 [[]] 链接 → 保留原样（Obsidian 渲染为蓝色链接，会被追踪）
         lines.push(`${indent}- ${rawHeading}`);
       } else {
-        lines.push(`${indent}- [[${fileName}#${rawHeading}|${rawHeading}]]`);
+        // 不含链接 → HTML <a> 标签（黑色，可点击跳转但不被 Obsidian 追踪，不实时更新）
+        const href = `${fileName}#${rawHeading}`;
+        const styleAttr = staticColor ? ` style="color: ${staticColor};"` : "";
+        lines.push(`${indent}- <a data-href="${href}" href="${href}" class="internal-link catalog-static-link" target="_blank" rel="noopener"${styleAttr}>${rawHeading}</a>`);
       }
     }
+
     return lines.join("\n");
   }
 
@@ -419,9 +407,6 @@ export default class FileCatalogPlugin extends Plugin {
     if (!this.settings.headingLevels) {
       this.settings.headingLevels = Object.assign({}, DEFAULT_SETTINGS.headingLevels);
     }
-    if (!this.settings.hotkeyConfigs) {
-      this.settings.hotkeyConfigs = DEFAULT_SETTINGS.hotkeyConfigs.map((c) => Object.assign({}, c));
-    }
     if (!this.settings.style) {
       this.settings.style = Object.assign({}, DEFAULT_SETTINGS.style);
     }
@@ -430,35 +415,75 @@ export default class FileCatalogPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
   }
-}
 
-class FileNameModal extends Modal {
-  private plugin: FileCatalogPlugin;
-  private onSubmit: (fileName: string) => void;
-
-  constructor(app: App, plugin: FileCatalogPlugin, onSubmit: (fileName: string) => void) {
-    super(app);
-    this.plugin = plugin;
-    this.onSubmit = onSubmit;
+  // ================================================================
+  //  快捷键迁移（均为一次性）
+  //  1. 命令 id 变更迁移：insert-file-catalog → insert（≤1.1.3），
+  //     原生 hotkeys.json 中旧 id 的快捷键搬到新 id
+  //  2. data.json 迁移：旧版把快捷键存 data.json 并在每次 onload 用
+  //     setHotkeys 重绑（仅写内存不落盘），改为转写进原生配置后移除旧字段
+  // ================================================================
+  async migrateLegacyHotkeys(): Promise<void> {
+    await this.migrateCommandId();
+    await this.migrateDataJsonHotkeys();
   }
 
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.createEl("h2", { text: this.plugin.t("modal_title") });
-    contentEl.createEl("p", { text: this.plugin.t("modal_desc"), cls: "catalog-desc" });
-    const input = contentEl.createEl("input", { type: "text", cls: "catalog-input", attr: { placeholder: this.plugin.t("modal_placeholder") } });
-    input.addEventListener("keydown", (ev: KeyboardEvent) => {
-      if (ev.key === "Enter") {
-        const value = input.value.trim();
-        if (value) { this.onSubmit(value); this.close(); }
+  async migrateCommandId(): Promise<void> {
+    try {
+      const hm = (this.app as any).hotkeyManager;
+      if (typeof hm.getHotkeys !== "function") return;
+      const oldFull = `${PLUGIN_ID}:${LEGACY_COMMAND_ID}`;
+      const legacy = hm.getHotkeys(oldFull);
+      if (!legacy || legacy.length === 0) return;
+      const newFull = `${PLUGIN_ID}:${PLUGIN_COMMANDS[0]}`;
+      const current = hm.getHotkeys(newFull);
+      if (!current || current.length === 0) {
+        hm.setHotkeys(newFull, legacy);
       }
-    });
-    input.focus();
+      // 新 id 已有快捷键时尊重现值，仅清空旧 id，避免残留死配置
+      hm.setHotkeys(oldFull, []);
+      if (typeof hm.save === "function") {
+        try {
+          Promise.resolve(hm.save()).catch(() => {});
+        } catch (e) {}
+      }
+    } catch (e) {}
   }
 
-  onClose(): void { this.contentEl.empty(); }
+  async migrateDataJsonHotkeys(): Promise<void> {
+    if (!this.settings.hotkeyConfigs) return;
+    const oldConfigs = this.settings.hotkeyConfigs.filter((c) => c && c.hotkey);
+    if (oldConfigs.length > 0) {
+      const hm = (this.app as any).hotkeyManager;
+      let migrated = 0;
+      for (const c of oldConfigs) {
+        // 旧 data.json 里可能存的是历史命令 id，统一映射为当前 id
+        const cmdId = c.commandId === LEGACY_COMMAND_ID ? PLUGIN_COMMANDS[0] : c.commandId;
+        const fullId = `${PLUGIN_ID}:${cmdId}`;
+        try {
+          // 原生已有自定义快捷键时尊重原生值，不覆盖
+          const existing = typeof hm.getHotkeys === "function" ? hm.getHotkeys(fullId) : null;
+          if (existing && existing.length > 0) continue;
+          hm.setHotkeys(fullId, [c.hotkey]);
+          migrated++;
+        } catch (e) {
+          console.error(`[file-catalog] 迁移 ${cmdId} 快捷键失败:`, e);
+        }
+      }
+      if (migrated > 0 && typeof hm.save === "function") {
+        try {
+          Promise.resolve(hm.save()).catch(() => {});
+        } catch (e) {}
+      }
+    }
+    delete this.settings.hotkeyConfigs;
+    await this.saveSettings();
+  }
 }
 
+// ================================================================
+//  设置面板
+// ================================================================
 class FileCatalogSettingTab extends PluginSettingTab {
   plugin: FileCatalogPlugin;
 
@@ -475,6 +500,7 @@ class FileCatalogSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+
     containerEl.createEl("h2", { text: "XU File Catalog" });
 
     // ---- 界面语言切换器（置顶） ----
@@ -489,7 +515,9 @@ class FileCatalogSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.language = value as "zh" | "en";
             await this.plugin.saveSettings();
+            // 重新注册命令（使命令名使用新语言）
             this.plugin.registerCommands();
+            // 重新渲染设置面板
             this.display();
           })
       );
@@ -513,22 +541,22 @@ class FileCatalogSettingTab extends PluginSettingTab {
       wrapper.createEl("span", { text: `H${level}` });
     }
 
-    // ---- 快捷键设置 ----
+    // ---- 快捷键设置（跳转 Obsidian 原生设置页并定位） ----
     containerEl.createEl("hr", { cls: "fc-divider" });
     containerEl.createEl("h3", { text: this.t("sec_hotkey") });
 
     const desc = containerEl.createEl("p", { cls: "fc-desc" });
     desc.innerHTML = this.t("hotkey_desc");
 
-    for (let i = 0; i < this.plugin.settings.hotkeyConfigs.length; i++) {
-      this.createHotkeySetting(i);
+    for (const commandId of PLUGIN_COMMANDS) {
+      this.createHotkeyLocateSetting(commandId);
     }
 
     // ---- 目录样式设置 ----
     containerEl.createEl("hr", { cls: "fc-divider" });
     containerEl.createEl("h3", { text: this.t("sec_style") });
 
-    const style = this.plugin.settings.style || {} as CatalogStyle;
+    const style = this.plugin.settings.style || ({} as CatalogStyle);
 
     new Setting(containerEl)
       .setName(this.t("setting_link_color"))
@@ -595,29 +623,16 @@ class FileCatalogSettingTab extends PluginSettingTab {
           })
       );
 
-    // ---- 更多入口 ----
+    // ---- 帮助与文档 ----
     containerEl.createEl("hr", { cls: "fc-divider" });
-
-    new Setting(containerEl)
-      .setName(this.t("setting_more_hotkeys"))
-      .setDesc(this.t("setting_more_hotkeys_desc"))
-      .addButton((btn) =>
-        btn
-          .setButtonText(this.t("btn_open_hotkeys"))
-          .onClick(() => {
-            const ok = openHotkeysSettings(this.app);
-            if (ok) new Notice(this.t("notice_hotkeys_opened"), 6000);
-            else new Notice(this.t("notice_hotkeys_open_failed"), 6000);
-          })
-      );
-
-    // ---- 使用说明 ----
-    const tip = containerEl.createEl("div", { cls: "fc-tip" });
-    tip.innerHTML =
-      `<b>${this.t("tip_title")}</b><br>` +
-      `${this.t("tip_1")}<br>` +
-      `${this.t("tip_2")}<br>` +
-      `${this.t("tip_3")}`;
+    const helpSetting = new Setting(containerEl)
+      .setName(this.t("sec_help"))
+      .setDesc(this.t("help_desc"));
+    helpSetting.controlEl.createEl("a", {
+      text: this.t("btn_open_repo"),
+      href: REPO_URL,
+      cls: "fc-repo-link",
+    });
 
     // ---- 重置 ----
     containerEl.createEl("hr", { cls: "fc-divider" });
@@ -630,17 +645,15 @@ class FileCatalogSettingTab extends PluginSettingTab {
           .setButtonText(this.t("btn_reset"))
           .setWarning()
           .onClick(async () => {
+            // 保留语言选择（快捷键由 Obsidian 原生配置持久化，重置不动它）
             const savedLang = this.plugin.settings.language;
-            for (const config of this.plugin.settings.hotkeyConfigs) {
-              const fullId = `${PLUGIN_ID}:${config.commandId}`;
-              try { (this.app as any).hotkeyManager.removeHotkeys(fullId); } catch {}
-            }
+            // 恢复默认设置
             this.plugin.settings = Object.assign({}, DEFAULT_SETTINGS);
             this.plugin.settings.language = savedLang;
             this.plugin.settings.headingLevels = Object.assign({}, DEFAULT_SETTINGS.headingLevels);
-            this.plugin.settings.hotkeyConfigs = DEFAULT_SETTINGS.hotkeyConfigs.map((c) => Object.assign({}, c));
             this.plugin.settings.style = Object.assign({}, DEFAULT_SETTINGS.style);
             await this.plugin.saveSettings();
+            // 重新注册命令 + 重新渲染面板
             this.plugin.registerCommands();
             this.display();
             new Notice(this.t("notice_reset"), 2000);
@@ -648,96 +661,25 @@ class FileCatalogSettingTab extends PluginSettingTab {
       );
   }
 
-  private createHotkeySetting(index: number): void {
-    const plugin = this.plugin;
-    const config = plugin.settings.hotkeyConfigs[index];
-    const fullId = `${PLUGIN_ID}:${config.commandId}`;
-    const cmdName = plugin.getCommandDisplayName(config.commandId);
+  // 快捷键设置：不再本地录制，跳转 Obsidian 原生快捷键设置页并自动定位到命令
+  private createHotkeyLocateSetting(commandId: string): void {
+    const fullId = `${PLUGIN_ID}:${commandId}`;
+    // 优先用实际注册的命令名作为搜索词（与原生设置页列表展示文本一致）
+    const registered = (this.app as any).commands.commands[fullId];
+    const displayName = (registered && registered.name) || this.plugin.getCommandDisplayName(commandId);
 
-    const setting = new Setting(this.containerEl).setName(cmdName);
-
-    const inputEl = setting.controlEl.createEl("input", {
-      type: "text", cls: "fc-hotkey-input", attr: { readonly: true, placeholder: this.t("hotkey_placeholder") },
-    });
-    inputEl.value = formatHotkey(config.hotkey);
-
-    const warningEl = setting.descEl.createEl("div", { cls: "fc-warning" });
-
-    const updateWarning = (hotkey: Hotkey | null) => {
-      warningEl.empty();
-      warningEl.removeClass("has-conflict");
-      if (!hotkey) return;
-      const conflict = findConflict(this.app, fullId, hotkey);
-      if (conflict) {
-        warningEl.addClass("has-conflict");
-        warningEl.createEl("span", { text: this.t("hotkey_conflict_label"), cls: "fc-conflict-label" });
-        warningEl.createEl("span", { text: conflict.commandName, cls: "fc-conflict-name" });
-        warningEl.createEl("span", { text: "  " });
-        const link = warningEl.createEl("a", { text: this.t("hotkey_conflict_link"), cls: "fc-conflict-link", attr: { href: "#" } });
-        link.addEventListener("click", (ev: MouseEvent) => {
-          ev.preventDefault();
-          openHotkeysSettings(this.app);
-          new Notice(this.t("notice_search_in_hotkeys", { name: conflict.commandName }), 8000);
-        });
-      } else {
-        warningEl.createEl("span", { text: this.t("hotkey_no_conflict"), cls: "fc-ok" });
-      }
-    };
-
-    updateWarning(config.hotkey);
-
-    inputEl.addEventListener("focus", () => inputEl.addClass("recording"));
-    inputEl.addEventListener("blur", () => inputEl.removeClass("recording"));
-
-    inputEl.addEventListener("keydown", async (ev: KeyboardEvent) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const key = ev.key;
-      if (key === "Backspace" || key === "Escape" || key === "Delete") {
-        if (config.hotkey) { try { (this.app as any).hotkeyManager.removeHotkeys(fullId); } catch {} }
-        config.hotkey = null;
-        inputEl.value = "";
-        await plugin.saveSettings();
-        updateWarning(null);
-        new Notice(this.t("notice_hotkey_cleared", { name: cmdName }), 2000);
-        return;
-      }
-      if (["Control", "Alt", "Shift", "Meta", "Tab"].includes(key)) return;
-      const modifiers: string[] = [];
-      if (ev.ctrlKey) modifiers.push("Mod");
-      if (ev.altKey) modifiers.push("Alt");
-      if (ev.shiftKey) modifiers.push("Shift");
-      if (ev.metaKey) modifiers.push("Meta");
-      let displayKey = key;
-      if (key.length === 1) displayKey = key.toUpperCase();
-      const hotkey: Hotkey = { modifiers, key: displayKey };
-      config.hotkey = hotkey;
-      inputEl.value = formatHotkey(hotkey);
-      try {
-        (this.app as any).hotkeyManager.setHotkeys(fullId, [hotkey]);
-      } catch (e: any) {
-        console.error(`[file-catalog] 设置 ${config.commandId} 快捷键失败:`, e);
-        new Notice(this.t("notice_hotkey_set_failed", { message: e.message }), 5000);
-        return;
-      }
-      await plugin.saveSettings();
-      updateWarning(hotkey);
-      const conflict = findConflict(this.app, fullId, hotkey);
-      if (conflict) {
-        new Notice(this.t("notice_hotkey_conflict", { name: conflict.commandName }), 8000);
-      } else {
-        new Notice(this.t("notice_hotkey_set", { name: cmdName, hotkey: formatHotkey(hotkey) }), 2000);
-      }
-    });
-
-    setting.addExtraButton((btn) =>
-      btn.setIcon("cross").setTooltip(this.t("hotkey_tooltip_clear")).onClick(async () => {
-        if (config.hotkey) { try { (this.app as any).hotkeyManager.removeHotkeys(fullId); } catch {} }
-        config.hotkey = null;
-        inputEl.value = "";
-        await plugin.saveSettings();
-        updateWarning(null);
-      })
-    );
+    new Setting(this.containerEl)
+      .setName(displayName)
+      .setDesc(this.t("hotkey_native_desc"))
+      .addButton((btn) =>
+        btn.setButtonText(this.t("btn_locate_hotkey")).onClick(() => {
+          const ok = openHotkeysSettings(this.app, displayName);
+          if (ok) {
+            new Notice(this.t("notice_hotkeys_located", { name: displayName }), 4000);
+          } else {
+            new Notice(this.t("notice_hotkeys_open_failed"), 6000);
+          }
+        })
+      );
   }
 }
