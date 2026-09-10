@@ -146,4 +146,4 @@ test
 
 ## 许可证
 
-MIT License - Copyright (c) 2026 旭说云原生
+MIT License - Copyright (c) 2026 旭说
