@@ -69,6 +69,9 @@ const I18N: Record<string, Record<string, string>> = {
     msg_no_matching_headings: "文件 **{fileName}** 中没有匹配的标题（当前显示：{enabled}）。",
     label_none: "无",
     sep_levels: "、",
+    // 设置 - 标准头
+    setting_title: "XU File Catalog（文件目录生成器）",
+    setting_header_desc: "读取指定文件的标题生成可点击目录树，支持标题层级筛选、代码块动态渲染、样式自定义与快捷键定位。",
     // 设置 - 语言
     setting_language: "界面语言",
     setting_language_desc: "选择设置面板的显示语言",
@@ -102,10 +105,10 @@ const I18N: Record<string, Record<string, string>> = {
     setting_reset_desc: "将所有设置恢复为默认值（保留语言选择）",
     btn_reset: "重置",
     notice_reset: "设置已恢复为默认值",
-    // 设置 - 帮助与文档
-    sec_help: "帮助与文档",
-    help_desc: "完整的安装、使用说明（操作手册）与更新日志请访问 GitHub 仓库",
-    btn_open_repo: "打开 GitHub 仓库",
+    // 设置 - GitHub 使用文档（统一入口）
+    setting_docs: "使用文档",
+    setting_docs_desc: "在 GitHub 查看完整使用说明（操作手册）与更新日志",
+    btn_github: "GitHub",
   },
   en: {
     // Commands
@@ -122,6 +125,9 @@ const I18N: Record<string, Record<string, string>> = {
     msg_no_matching_headings: "No matching headings in file **{fileName}** (currently showing: {enabled}).",
     label_none: "none",
     sep_levels: ", ",
+    // Settings - standard header
+    setting_title: "XU File Catalog",
+    setting_header_desc: "Generates a clickable catalog tree from the headings of a given file, with heading-level filters, dynamic code-block rendering, style customization and hotkey-based locating.",
     // Settings - language
     setting_language: "UI Language",
     setting_language_desc: "Select the display language for settings panel",
@@ -155,10 +161,10 @@ const I18N: Record<string, Record<string, string>> = {
     setting_reset_desc: "Restore all settings to default values (preserves language selection)",
     btn_reset: "Reset",
     notice_reset: "Settings reset to defaults",
-    // Settings - help & docs
-    sec_help: "Help & Docs",
-    help_desc: "Full installation, usage guide (manual) and changelog are available in the GitHub repository",
-    btn_open_repo: "Open GitHub Repo",
+    // Settings - GitHub docs (unified entry)
+    setting_docs: "Documentation",
+    setting_docs_desc: "View the full usage guide (manual) and changelog on GitHub",
+    btn_github: "GitHub",
   },
 };
 
@@ -501,7 +507,9 @@ class FileCatalogSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "XU File Catalog" });
+    // ---- 标准头：英文名（中文名）+ 描述 ----
+    containerEl.createEl("h2", { text: this.t("setting_title") });
+    containerEl.createDiv({ cls: "fc-desc", text: this.t("setting_header_desc") });
 
     // ---- 界面语言切换器（置顶） ----
     new Setting(containerEl)
@@ -623,16 +631,16 @@ class FileCatalogSettingTab extends PluginSettingTab {
           })
       );
 
-    // ---- 帮助与文档 ----
+    // ---- GitHub 使用文档（统一入口） ----
     containerEl.createEl("hr", { cls: "fc-divider" });
-    const helpSetting = new Setting(containerEl)
-      .setName(this.t("sec_help"))
-      .setDesc(this.t("help_desc"));
-    helpSetting.controlEl.createEl("a", {
-      text: this.t("btn_open_repo"),
-      href: REPO_URL,
-      cls: "fc-repo-link",
-    });
+    new Setting(containerEl)
+      .setName(this.t("setting_docs"))
+      .setDesc(this.t("setting_docs_desc"))
+      .addButton((btn) =>
+        btn.setButtonText(this.t("btn_github")).onClick(() => {
+          window.open(REPO_URL, "_blank");
+        })
+      );
 
     // ---- 重置 ----
     containerEl.createEl("hr", { cls: "fc-divider" });
