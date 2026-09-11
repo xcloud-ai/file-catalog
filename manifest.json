@@ -1,7 +1,7 @@
 {
   "id": "file-catalog",
   "name": "XU File Catalog",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "minAppVersion": "1.4.0",
   "description": "文件目录生成器：读取指定文件的标题生成可点击目录树，支持代码块动态渲染、命令插入、标题层级与样式自定义、快捷键定位.",
   "author": "旭说",

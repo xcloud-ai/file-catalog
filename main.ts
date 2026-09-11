@@ -507,8 +507,8 @@ class FileCatalogSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    // ---- 标准头：英文名（中文名）+ 描述 ----
-    containerEl.createEl("h2", { text: this.t("setting_title") });
+    // ---- 标准头：英文名（中文名）+ 描述（官方要求 setHeading，禁止直接创建 h2/h3） ----
+    new Setting(containerEl).setName(this.t("setting_title")).setHeading();
     containerEl.createDiv({ cls: "fc-desc", text: this.t("setting_header_desc") });
 
     // ---- 界面语言切换器（置顶） ----
@@ -551,7 +551,7 @@ class FileCatalogSettingTab extends PluginSettingTab {
 
     // ---- 快捷键设置（跳转 Obsidian 原生设置页并定位） ----
     containerEl.createEl("hr", { cls: "fc-divider" });
-    containerEl.createEl("h3", { text: this.t("sec_hotkey") });
+    new Setting(containerEl).setName(this.t("sec_hotkey")).setHeading();
 
     const desc = containerEl.createEl("p", { cls: "fc-desc" });
     desc.innerHTML = this.t("hotkey_desc");
@@ -562,7 +562,7 @@ class FileCatalogSettingTab extends PluginSettingTab {
 
     // ---- 目录样式设置 ----
     containerEl.createEl("hr", { cls: "fc-divider" });
-    containerEl.createEl("h3", { text: this.t("sec_style") });
+    new Setting(containerEl).setName(this.t("sec_style")).setHeading();
 
     const style = this.plugin.settings.style || ({} as CatalogStyle);
 
