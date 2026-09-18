@@ -12,6 +12,7 @@ Reads headings from a specified Markdown file and generates a clickable, hierarc
 ## 功能特性
 
 - **代码块动态渲染**：` ```filecatalog ` 代码块，阅读视图自动渲染目标文件的标题目录
+- **自动刷新**：目标文件标题变化后，已渲染的目录代码块自动更新（与标题编号类插件联用友好）
 - **支持 `[[]]` 链接格式**：代码块里写 `[[文件名]]` 指定目标文件
 - **命令双模式**：选中 `[[test]]` → 直接替换为目录；无选中 → 插入代码块框架（内含 [[]] 占位），光标定位到 [[ 与 ]] 之间
 - **标题层级自定义**：可选择 H1-H6 哪些层级显示，默认 H2 + H3
@@ -23,6 +24,7 @@ Reads headings from a specified Markdown file and generates a clickable, hierarc
 ### Features
 
 - Code block dynamic rendering: ` ```filecatalog ` renders TOC in reading view
+- Auto refresh: rendered catalog blocks update automatically when the target file's headings change
 - Supports `[[]]` link format to specify the target file
 - Command dual-mode: replace selected `[[file]]` with TOC, or insert code block frame with a [[]] placeholder and cursor between the brackets
 - Custom heading levels: select H1-H6 to display, default H2 + H3

@@ -276,30 +276,32 @@ class FileCatalogPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    // 1. 代码块处理器
+    // 已渲染目录登记表（el -> { fileName, sourcePath }，自动刷新反查用）与刷新定时器
+    this._catalogs = new Map();
+    this._refreshTimer = null;
+
+    // 1. 代码块处理器（渲染逻辑提取为 renderCatalogBlock，供自动刷新复用）
     this.registerMarkdownCodeBlockProcessor("filecatalog", async (source, el, ctx) => {
-      const fileName = parseFileName(source);
-      if (!fileName) {
-        el.createEl("p", { text: this.t("error_input_filename"), cls: "catalog-error" });
-        return;
-      }
-      el.empty();
-      el.addClass("file-catalog");
-      // 应用自定义样式（CSS 变量）
-      const s = this.settings.style || {};
-      if (s.lineHeight) el.style.setProperty("--fc-line-height", s.lineHeight);
-      if (s.fontSize) el.style.setProperty("--fc-font-size", s.fontSize + "px");
-      if (s.indentSize) el.style.setProperty("--fc-indent", s.indentSize + "px");
-      if (s.staticColor) el.style.setProperty("--fc-static-color", s.staticColor);
-      const markdown = this.generateCatalog(fileName, ctx.sourcePath);
-      await MarkdownRenderer.renderMarkdown(markdown, el, ctx.sourcePath, this);
-      // 渲染后覆盖超链接颜色
-      if (s.linkColor) {
-        el.querySelectorAll("a.internal-link:not(.catalog-static-link)").forEach((a) => {
-          a.style.color = s.linkColor;
-        });
-      }
+      await this.renderCatalogBlock(el, parseFileName(source), ctx.sourcePath);
     });
+
+    // 2. 目标文件标题变化 → 自动刷新已渲染的目录代码块
+    //    metadataCache.changed 仅在解析结果（含标题）变化时触发，比 vault.modify 精准；
+    //    重渲染不改文件，无自触发循环
+    this.registerEvent(
+      this.app.metadataCache.on("changed", (file) => {
+        for (const [el, rec] of this._catalogs) {
+          if (!el.isConnected) {
+            this._catalogs.delete(el);
+            continue;
+          }
+          if (rec.fileName === file.path || rec.fileName === file.basename) {
+            this.scheduleCatalogRefresh();
+            return;
+          }
+        }
+      })
+    );
 
     // 2. 命令注册
     this.registerCommands();
@@ -359,6 +361,52 @@ class FileCatalogPlugin extends Plugin {
   onunload() {
     // 设置面板有未落盘的防抖输入时立即写盘
     if (this.settingTab) this.settingTab.flushStyleSave();
+    // 清理目录登记表与待执行的刷新定时器
+    if (this._refreshTimer) clearTimeout(this._refreshTimer);
+    this._catalogs.clear();
+  }
+
+  // ================================================================
+  //  目录代码块渲染（含登记，供自动刷新复用）
+  // ================================================================
+  async renderCatalogBlock(el, fileName, sourcePath) {
+    if (!fileName) {
+      this._catalogs.delete(el);
+      el.createEl("p", { text: this.t("error_input_filename"), cls: "catalog-error" });
+      return;
+    }
+    el.empty();
+    el.addClass("file-catalog");
+    // 应用自定义样式（CSS 变量）
+    const s = this.settings.style || {};
+    if (s.lineHeight) el.style.setProperty("--fc-line-height", s.lineHeight);
+    if (s.fontSize) el.style.setProperty("--fc-font-size", s.fontSize + "px");
+    if (s.indentSize) el.style.setProperty("--fc-indent", s.indentSize + "px");
+    if (s.staticColor) el.style.setProperty("--fc-static-color", s.staticColor);
+    const markdown = this.generateCatalog(fileName, sourcePath);
+    await MarkdownRenderer.renderMarkdown(markdown, el, sourcePath, this);
+    // 渲染后覆盖超链接颜色
+    if (s.linkColor) {
+      el.querySelectorAll("a.internal-link:not(.catalog-static-link)").forEach((a) => {
+        a.style.color = s.linkColor;
+      });
+    }
+    this._catalogs.set(el, { fileName, sourcePath });
+  }
+
+  // 防抖刷新所有已登记目录（目标文件标题/设置变化后 500ms 统一重渲染）
+  scheduleCatalogRefresh() {
+    if (this._refreshTimer) clearTimeout(this._refreshTimer);
+    this._refreshTimer = setTimeout(async () => {
+      this._refreshTimer = null;
+      for (const [el, rec] of this._catalogs) {
+        if (!el.isConnected) {
+          this._catalogs.delete(el);
+          continue;
+        }
+        await this.renderCatalogBlock(el, rec.fileName, rec.sourcePath);
+      }
+    }, 500);
   }
 
   // ================================================================
@@ -509,9 +557,11 @@ class FileCatalogSettingTab extends PluginSettingTab {
   // 样式输入防抖写盘（400ms）：避免每敲一字符写一次 data.json
   _scheduleStyleSave() {
     if (this._styleTimer) clearTimeout(this._styleTimer);
-    this._styleTimer = setTimeout(() => {
+    this._styleTimer = setTimeout(async () => {
       this._styleTimer = null;
-      this.plugin.saveSettings();
+      await this.plugin.saveSettings();
+      // 样式变化 → 刷新已渲染目录（linkColor 为渲染后 JS 覆盖）
+      this.plugin.scheduleCatalogRefresh();
     }, 400);
   }
 
@@ -570,6 +620,8 @@ class FileCatalogSettingTab extends PluginSettingTab {
       checkbox.addEventListener("change", async () => {
         this.plugin.settings.headingLevels[level] = checkbox.checked;
         await this.plugin.saveSettings();
+        // 层级筛选变化 → 刷新已渲染目录
+        this.plugin.scheduleCatalogRefresh();
       });
       wrapper.createEl("span", { text: `H${level}` });
     }
