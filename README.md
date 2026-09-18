@@ -1,5 +1,8 @@
 # 文件目录生成器
 
+> [!NOTE] 中文说明
+> **文件目录生成器**：读取指定文件的标题生成可点击目录树，支持代码块动态渲染、标题层级与样式自定义。
+
 读取指定 Markdown 文件的标题，生成带层级缩进的可点击目录树。支持代码块动态渲染、命令插入、标题层级与样式自定义、快捷键配置（跳转系统设置页自动定位），替代 DataviewJS 的 filecatalog 脚本，无需 Dataview 依赖。
 
 > English description below for review purposes. / 以下为英文说明，用于过审。

@@ -253,11 +253,22 @@ function parseFileName(source: string): string {
   return trimmed === "[[]]" ? "" : trimmed;
 }
 
+// HTML 转义：标题/文件名来自用户笔记内容，含 " < > & 等字符时必须转义，防 <a> 标签结构破坏
+function escapeHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ================================================================
 //  插件主类
 // ================================================================
 export default class FileCatalogPlugin extends Plugin {
   settings!: PluginSettings;
+  settingTab!: FileCatalogSettingTab;
 
   // i18n helper
   t(key: string, params?: Record<string, string>): string {
@@ -314,7 +325,8 @@ export default class FileCatalogPlugin extends Plugin {
     // 3. 迁移旧版 data.json 中保存的快捷键到 Obsidian 原生 hotkeys.json（一次性）
     await this.migrateLegacyHotkeys();
 
-    this.addSettingTab(new FileCatalogSettingTab(this.app, this));
+    this.settingTab = new FileCatalogSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
   }
 
   // ================================================================
@@ -333,7 +345,11 @@ export default class FileCatalogPlugin extends Plugin {
           const fileName = parseFileName(selection);
           if (fileName) {
             const markdown = this.generateCatalog(fileName);
-            editor.replaceSelection(markdown + "\n");
+            // 选中首部若非行边界（前面同行还有文字），目录前补换行防粘连；块尾固定换行
+            const from = editor.getCursor("from");
+            let block = markdown + "\n";
+            if (from.ch > 0) block = "\n" + block;
+            editor.replaceSelection(block);
             new Notice(this.t("notice_catalog_generated", { fileName }), 3000);
             return;
           }
@@ -357,7 +373,11 @@ export default class FileCatalogPlugin extends Plugin {
   }
 
   // 快捷键由 Obsidian 原生 hotkeys.json 持久化，插件停用/重载时不得清除；
-  // 命令/代码块处理器经 register 系注册，Obsidian 自动清理，无需 onunload
+  // 命令/代码块处理器经 register 系注册，Obsidian 自动清理
+  onunload() {
+    // 设置面板有未落盘的防抖输入时立即写盘
+    if (this.settingTab) this.settingTab.flushStyleSave();
+  }
 
   // ================================================================
   //  核心：生成目录 markdown
@@ -397,8 +417,8 @@ export default class FileCatalogPlugin extends Plugin {
       } else {
         // 不含链接 → HTML <a> 标签（黑色，可点击跳转但不被 Obsidian 追踪，不实时更新）
         const href = `${fileName}#${rawHeading}`;
-        const styleAttr = staticColor ? ` style="color: ${staticColor};"` : "";
-        lines.push(`${indent}- <a data-href="${href}" href="${href}" class="internal-link catalog-static-link" target="_blank" rel="noopener"${styleAttr}>${rawHeading}</a>`);
+        const styleAttr = staticColor ? ` style="color: ${escapeHtml(staticColor)};"` : "";
+        lines.push(`${indent}- <a data-href="${escapeHtml(href)}" href="${escapeHtml(href)}" class="internal-link catalog-static-link" target="_blank" rel="noopener"${styleAttr}>${escapeHtml(rawHeading)}</a>`);
       }
     }
 
@@ -450,7 +470,7 @@ export default class FileCatalogPlugin extends Plugin {
       hm.setHotkeys(oldFull, []);
       if (typeof hm.save === "function") {
         try {
-          Promise.resolve(hm.save()).catch(() => {});
+          await Promise.resolve(hm.save()); // 等落盘确认，防快捷键丢失
         } catch (e) {}
       }
     } catch (e) {}
@@ -478,8 +498,10 @@ export default class FileCatalogPlugin extends Plugin {
       }
       if (migrated > 0 && typeof hm.save === "function") {
         try {
-          Promise.resolve(hm.save()).catch(() => {});
-        } catch (e) {}
+          await Promise.resolve(hm.save()); // hotkeys.json 落盘确认
+        } catch (e) {
+          return; // 落盘失败保留旧键，下次启动重试
+        }
       }
     }
     delete this.settings.hotkeyConfigs;
@@ -492,10 +514,33 @@ export default class FileCatalogPlugin extends Plugin {
 // ================================================================
 class FileCatalogSettingTab extends PluginSettingTab {
   plugin: FileCatalogPlugin;
+  private _styleTimer: any = null; // 样式输入防抖定时器
 
   constructor(app: App, plugin: FileCatalogPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  // 样式输入防抖写盘（400ms）：避免每敲一字符写一次 data.json
+  private _scheduleStyleSave(): void {
+    if (this._styleTimer) clearTimeout(this._styleTimer);
+    this._styleTimer = setTimeout(() => {
+      this._styleTimer = null;
+      this.plugin.saveSettings();
+    }, 400);
+  }
+
+  // 面板关闭/插件卸载时立即写盘未落盘的输入
+  flushStyleSave(): void {
+    if (this._styleTimer) {
+      clearTimeout(this._styleTimer);
+      this._styleTimer = null;
+      this.plugin.saveSettings();
+    }
+  }
+
+  onHide(): void {
+    this.flushStyleSave();
   }
 
   // i18n helper
@@ -554,7 +599,7 @@ class FileCatalogSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName(this.t("sec_hotkey")).setHeading();
 
     const desc = containerEl.createEl("p", { cls: "fc-desc" });
-    desc.innerHTML = this.t("hotkey_desc");
+    desc.textContent = this.t("hotkey_desc");
 
     for (const commandId of PLUGIN_COMMANDS) {
       this.createHotkeyLocateSetting(commandId);
@@ -573,9 +618,9 @@ class FileCatalogSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("#7c3aed")
           .setValue(style.linkColor || "")
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.style.linkColor = value.trim();
-            await this.plugin.saveSettings();
+            this._scheduleStyleSave();
           })
       );
 
@@ -586,9 +631,9 @@ class FileCatalogSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("#333333")
           .setValue(style.staticColor || "")
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.style.staticColor = value.trim();
-            await this.plugin.saveSettings();
+            this._scheduleStyleSave();
           })
       );
 
@@ -599,9 +644,9 @@ class FileCatalogSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("14")
           .setValue(style.fontSize || "")
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.style.fontSize = value.trim();
-            await this.plugin.saveSettings();
+            this._scheduleStyleSave();
           })
       );
 
@@ -612,9 +657,9 @@ class FileCatalogSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("1.4")
           .setValue(style.lineHeight || "1.4")
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.style.lineHeight = value.trim() || "1.4";
-            await this.plugin.saveSettings();
+            this._scheduleStyleSave();
           })
       );
 
@@ -625,9 +670,9 @@ class FileCatalogSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("20")
           .setValue(style.indentSize || "20")
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.style.indentSize = value.trim() || "20";
-            await this.plugin.saveSettings();
+            this._scheduleStyleSave();
           })
       );
 
