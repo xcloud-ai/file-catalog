@@ -34,24 +34,24 @@ Reads headings from a specified Markdown file and generates a clickable, hierarc
 
 ## 安装
 
-### 方式一：从 Obsidian 社区目录安装(推荐)
+### 方式一：从 Obsidian 社区目录安装（推荐）
 
 1. 打开 Obsidian 设置 → 社区插件
-2. 点击"浏览"，搜索 "文件目录生成器"
-3. 点击"安装"，然后"启用"
+2. 点击「浏览」，搜索 "XU File Catalog"
+3. 点击「安装」，然后「启用」
 
 ### 方式二：手动安装
 
 1. 从 [最新 Release](https://github.com/xcloud-ai/file-catalog/releases) 下载 `main.js`、`manifest.json`、`styles.css` 三个文件
 2. 在 vault 中创建目录 `.obsidian/plugins/file-catalog/`
 3. 将三个文件放入该目录
-4. 打开 Obsidian 设置 → 社区插件，找到"文件目录生成器"并开启
+4. 打开 Obsidian 设置 → 社区插件，找到 XU File Catalog 并开启
 
 ### Installation
 
 **From Obsidian Community Directory:**
 1. Open Obsidian Settings → Community Plugins
-2. Click "Browse" and search for "File Catalog"
+2. Click "Browse" and search for "XU File Catalog"
 3. Click "Install", then "Enable"
 
 **Manual Installation:**
